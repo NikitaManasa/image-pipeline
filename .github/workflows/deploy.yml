@@ -1,0 +1,73 @@
+name: Deploy
+
+# Manual only: run from the Actions tab -> Deploy -> Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: apply (deploy + smoke test) or destroy (delete everything)
+        type: choice
+        options: [apply, destroy]
+        default: apply
+      alert_email:
+        description: Optional email for CloudWatch alarms
+        type: string
+        default: ""
+
+permissions:
+  id-token: write # lets the job request an OIDC token to assume the AWS role; no AWS keys stored in GitHub
+  contents: read
+
+concurrency:
+  group: deploy # never two deploys at once
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_VAR_alert_email: ${{ inputs.alert_email }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build Lambda packages
+        run: pip install pillow==11.0.0 && python scripts/build.py
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          terraform init -input=false \
+            -backend-config="bucket=image-pipeline-tfstate-${ACCOUNT_ID}" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: Terraform ${{ inputs.action }}
+        working-directory: infra
+        run: |
+          if [ "${{ inputs.action }}" = "destroy" ]; then
+            terraform destroy -input=false -auto-approve
+          else
+            terraform apply -input=false -auto-approve
+            echo "API_URL=$(terraform output -raw api_url)" >> "$GITHUB_ENV"
+            echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"
+            echo "- API: $(terraform output -raw api_url)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Dashboard: $(terraform output -raw dashboard_url)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Smoke test against the live API
+        if: inputs.action == 'apply'
+        run: python scripts/demo.py "$API_URL"

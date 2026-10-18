@@ -1,0 +1,6 @@
+# Lambda runtime already provides boto3; Pillow is bundled into the processor zip by scripts/build.py
+boto3==1.35.81
+pillow==11.0.0
+moto[s3,dynamodb,sqs]==5.0.22
+pytest==8.3.4
+ruff==0.8.4

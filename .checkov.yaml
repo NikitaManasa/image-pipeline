@@ -1,0 +1,31 @@
+# Checkov IaC scan config. Every skipped check is a deliberate, documented trade-off for a
+# low-cost demo deployment; revisit each one before using this for real customer data.
+directory:
+  - infra
+framework:
+  - terraform
+  - cloudformation
+compact: true
+quiet: true
+skip-download: true
+skip-check:
+  # --- Cost: customer-managed KMS keys cost $1/key/month each. Data is still encrypted at rest
+  #     with AWS-managed keys (S3 SSE-S3, DynamoDB default, SQS SSE-SQS, CloudWatch default).
+  - CKV_AWS_145 # S3 encrypted with KMS
+  - CKV_AWS_119 # DynamoDB encrypted with CMK
+  - CKV_AWS_158 # CloudWatch log group encrypted with KMS
+  - CKV_AWS_173 # Lambda env vars encrypted with CMK (they hold resource names, no secrets)
+  - CKV_AWS_26 # SNS encryption: CloudWatch alarms cannot publish to topics using the AWS-managed SNS key
+  # --- Not applicable to this design
+  - CKV_AWS_117 # Lambda in a VPC: it only calls AWS APIs; a VPC would need NAT gateways (~$32/month)
+  - CKV_AWS_116 # Lambda DLQ: async-invoke DLQs don't apply; SQS redrive policy provides the DLQ
+  - CKV_AWS_115 # Reserved concurrency: new accounts can't reserve; SQS maximum_concurrency caps the processor
+  - CKV_AWS_272 # Lambda code signing: needs AWS Signer profiles; packages are built and deployed only by CI
+  - CKV2_AWS_62 # Event notifications on the processed bucket: nothing consumes them
+  - CKV_AWS_144 # Cross-region replication: objects expire after 1-7 days; durability within a region is enough
+  - CKV_AWS_21 # Versioning on data buckets: objects are short-lived and reproducible (the state bucket IS versioned)
+  - CKV_AWS_18 # S3 access logs: would need a separate log bucket; CloudTrail data events cover audits if needed
+  - CKV_AWS_338 # 1-year log retention: 14 days keeps CloudWatch costs near zero for a demo
+  # --- Intentional public API: job ids are random UUIDs (unguessable) and the stage is throttled.
+  #     Next step on the roadmap: a Cognito JWT authorizer.
+  - CKV_AWS_309 # API Gateway route authorization
